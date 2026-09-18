@@ -148,7 +148,7 @@ Este sistema foi desenvolvido em parceria com um assistente de IA (Claude), usad
 
 ## Autor
 
-**[seu nome]** — [github.com/igv8101](https://github.com/igv8101)
+**Igor Pires Tavares** — [github.com/igv8101](https://github.com/igv8101)
 
 Formação em Ciência da Computação, técnico em redes, pós-graduação em Ciência de Dados e em Inteligência Artificial. Procurando trabalhar com engenharia de dados / IA aplicada.
 
