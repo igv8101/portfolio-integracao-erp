@@ -1,0 +1,12 @@
+# Este repositório é só documentação. Nada de dados, dumps ou credenciais.
+*.db
+*.db-*
+*.env
+*.env.*
+*.csv
+*.xlsx
+*.log
+*.zip
+node_modules/
+.DS_Store
+Thumbs.db
