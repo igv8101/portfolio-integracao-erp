@@ -138,3 +138,38 @@ Comportamentos descobertos por sondagem, experimento controlado ou na pele, entr
 ### Node / SQLite / Windows (bônus)
 
 `hidden` não sobrevive a `display:` inline — modal com `style="display:flex"` aparece mesmo com `hidden`; precisa de `[hidden]{display:none !important}`. Gerar HTML **depois** de `res.writeHead(200)` transforma erro em 200 vazio. Trocar arquivo de banco com conexão WAL aberta corrompe — sincronizar linha a linha via `ATTACH`. Um `.exe` em uso não pode ser sobrescrito por um atualizador. Arquivos recém-criados por um processo às vezes levam ~1 min para ficarem legíveis por outra ferramenta ("hardlinked").
+
+
+---
+
+## Adendos da semana 9 (19/09 a 28/09)
+
+### Tiny / Olist v3
+
+**O refresh token dura 24 h — e `offline_access` não muda isso.** O login do ERP é um Keycloak; pedir `scope=openid offline_access` na autorização não dá erro (`invalid_scope` não vem) e também não dá *offline token*: o ERP emite a autorização comum, com refresh de 24 h. Consequência prática: sem nenhuma máquina renovando por um dia, só uma pessoa reautorizando resolve. Qualquer integração com PCs que desligam no fim de semana precisa renovar de fora (PM24, D28).
+
+**403 "A conta está inativa" não é token.** Com um token recém-emitido e aceito, `/produtos`, `/pedidos` e `/contas-receber` respondiam 403 com essa mensagem. Se fosse token, seria 401 ou `invalid_grant`. É regra de negócio do cadastro (usuário ou conta marcados como inativos): reautorizar não resolve, e com um cofre de tokens (D24) o usuário errado se espalha para todas as máquinas. Distinguir 401 de 403-com-mensagem no painel foi o que permitiu mostrar o aviso certo.
+
+**429 no POST de pedido: nada foi criado.** Tratado como recusa definitiva, junto de 400/401/403/404/422 (D27). 409, 5xx e timeout são ambíguos.
+
+### Teceo (nova versão, 20/09)
+
+**Webhooks: a assinatura vem num cabeçalho que a documentação não cita.** Real: `X-Signature-Key: t=<unix>,sha256=<hex>`. Documentação: `X-Webhook-Signature: sha256=<hex>`. Tela de configuração: fala em "v1". O HMAC-SHA256 é calculado sobre `"<timestamp>.<corpo cru>"`, com o timestamp também em `X-Webhook-Timestamp` (segundos). Aceitar as três grafias custa pouco.
+
+**Reenvio só para 5xx, timeout e 429** (5 tentativas, 10/20/40/80 s). **4xx é falha definitiva** — um 401 do seu lado não será reenviado. E uma tela de login respondendo 200 conta como entregue (PM25).
+
+**O evento de cancelamento traz a justificativa** escrita pelo cliente (`data.reason`), o status anterior e quem mudou (`metadata.changedBy`).
+
+**Catálogo dinâmico, confirmado depois da virada:** não converte catálogos existentes; nada a mudar numa integração que só lê e grava estoque e pedidos.
+
+**Status de cliente tem `PENDING`, mas os pedidos de cadastro não passam por ele.** A API de clientes lista DRAFT, PENDING, APPROVED, BLOCKED e INACTIVE; os rascunhos são cadastros incompletos antigos. Os pedidos novos de cadastro ficam numa área de "conexões / convites recebidos" que **não existe na API** — nem leitura, nem webhook. Aprovar cliente continua manual.
+
+### Bling v3
+
+**O refresh token é de uso único — cópia de arquivo não sobrevive.** Depois de uma troca de host, o novo host tinha, pela réplica do banco, o refresh que o host anterior já tinha usado: `invalid_grant — Invalid refresh token` nas duas contas. Tokens precisam migrar por um canal próprio, com "o mais novo ganha" (D24), não junto com os dados.
+
+**Categorias como árvore.** O espelho de categorias (1×/dia) deu a raiz de cada produto (adulto / infantil / bebê); é ela que separa "P adulto" de "P bebê". A categoria só decide quando o tamanho existe na grade daquela família — produto cadastrado em categoria errada acontece, e "2 Anos" numa categoria de bebê é criança.
+
+### GitHub Actions (bônus)
+
+Plano gratuito sem cartão cadastrado: ao acabar a cota, a tarefa **para**, não cobra. O agendamento (`cron`) não é pontual (atrasos de minutos são normais) — por isso a renovação roda a cada 6 h para um prazo de 24 h. Segredos de repositório não aparecem em log e podem ser gravados pela linha de comando lendo direto do arquivo de ambiente, sem passar pela tela.

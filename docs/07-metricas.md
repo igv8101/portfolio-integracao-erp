@@ -19,6 +19,9 @@ Números medidos, com a fonte de cada um. Sem valores financeiros (regra deste r
 | 95 pais órfãos migrados em lote; trava manual; planilha passiva | 08/09 | 43 |
 | Pedidos, notas fiscais, financeiro e relatórios imprimíveis nas 3 empresas | 14/09 | 49 |
 | ERP principal sem saldo negativo nem reserva presa; saúde vigiando telas; folgas com livro-razão | 18/09 | 53 |
+| Webhooks da plataforma B2B validados com evento real; cofre de tokens; troca de host por botão | 21/09 | 56 |
+| Release assinada nos 4 PCs; trava de frescor na eleição de host; log de atos por computador | 25/09 | 60 |
+| Renovação do token pela nuvem com os PCs desligados | 28/09 | 63 |
 
 ## Escala
 
@@ -40,9 +43,10 @@ Números medidos, com a fonte de cada um. Sem valores financeiros (regra deste r
 | Item | Valor |
 |---|---|
 | Dependências de runtime | 0 |
-| Testes unitários | 49 (de 40 na primeira semana) |
+| Testes automatizados | **320** em 28/09 (40 na primeira semana; 49 em 18/09; 278 com a auditoria de 23–25/09; o resto veio com cada mudança da semana 9) |
 | Simuladores de mecanismo em banco descartável (setembro) | trava manual 13 · espelhamento 22 · página 12 · cota 9 · manifesto 8 · sincronização de cadastro 4 · guarda de produto novo 12 |
-| Rotas vigiadas pela aba Saúde | 43 (43/43 em 7,4 s) |
+| Rotas vigiadas pela aba Saúde | 45 em 28/09 (eram 43; 43/43 em 7,4 s na estreia) |
+| Releases assinadas publicadas pelo protocolo novo (25–28/09) | 6, nenhuma revertida |
 | Cenários do harness com ERP falso | 7 (3 falharam na primeira rodada; 7/7 depois) |
 | Cenários da auditoria da guarda | 5/5 |
 | Cenários da retomada automática | 8 |
@@ -50,7 +54,7 @@ Números medidos, com a fonte de cada um. Sem valores financeiros (regra deste r
 | Scripts operacionais versionados | ~270 |
 | Arquivos no pacote do instalador | 102 (semana 1) |
 | Módulos em `src/sync` | ~15 (pedidos, clientes, estoque, NF, edições, fotos/cadastro, financeiro, históricos, caches, réplica, update, lease, guarda, alerta) |
-| Documentos de trabalho datados | 100 (27/07 → 18/09) |
+| Documentos de trabalho datados | 111 (27/07 → 28/09) |
 
 ## Desempenho
 
@@ -67,6 +71,10 @@ Números medidos, com a fonte de cada um. Sem valores financeiros (regra deste r
 | Varredura Tiny → Teceo (1.355 SKUs) com outros PCs ligados | 0 SKUs em 70 min (pendurada) | 25 SKUs/min; 3 reinícios no meio = 0 perdidos | PM15: cota, 429, checkpoint |
 | Enumerar o catálogo do ERP com os dois campos de tipo | 2.656 chamadas | 27 chamadas | paginação de 100 |
 | Conferência relatórios × 2 ERPs × 3 empresas, 90 dias, dia a dia | manual | ~2 min, script só leitura, 0 divergências | conferência diária |
+| Reconciliação de catálogo com o ERP principal | a cada 15 min, ~2.600 chamadas/dia | a cada 8 h, ~80 chamadas/dia | intervalo revisto + botão manual (PM23) |
+| Pedido recusado pelo ERP por limite de cota | preso em reconciliação até alguém notar (~5 h) | volta à fila na hora | recusa definitiva classificada (D27) |
+| Troca de host com banco atrasado | aceita sem conferir | recusada se > 10 min atrás do último host | marca de frescor (D23) |
+| Token do ERP com todos os PCs desligados | morria em 24 h; reautorização manual toda segunda | renovado pela nuvem a cada 6 h quando preciso | D28 |
 
 ## Incidentes medidos e reparados
 
@@ -87,6 +95,12 @@ Números medidos, com a fonte de cada um. Sem valores financeiros (regra deste r
 | Folga do destravar (PM19) | 77 desbloqueios, +172 peças na plataforma | 55/56 alinhados ao vivo; 0 resíduo; livro-razão + passe de 20 min |
 | Quase-acidente da baixa em massa (02/09) | primeira conta: 618 notas / 32.587 peças | escopo real: 65 notas / 3.170 peças — e mesmo assim não aplicado (físico ≥ sistema) |
 | Compensação errada do cancelamento (PM17) | 11 SKUs | 6 ficaram com 1 peça a menos (decisão pendente); código corrigido para consultar autoria |
+| Código de um dia regredido na frota (PM21) | 3 entregas de 18/09 ausentes em todos os PCs e backups | refeitas em 25/09 a partir dos documentos datados; números de 365 dias iguais aos originais; release com downgrade recusado |
+| Troca de host com banco velho (PM22) | 31 vínculos de pedido, 5 feiras, 319 operações de estoque, 6 notas baixadas, etiquetas e fotos fora do banco vivo | recuperados em 69 s de parada, só `INSERT OR IGNORE`, integridade ok nos 4 bancos; caches, fila de impressão e ordens de máquina deixados fora de propósito |
+| Pedido preso por 429 (PM23) | 1 pedido, ~5 h | enviado no minuto da liberação; regra de recusa definitiva com teste |
+| Cota do ERP num dia de incidente (PM23) | 2.179 avisos de 429 (normal: ~1.200) | catálogo de 15 min para 8 h; histórico de notas refeito uma vez (388 notas) |
+| Token morto no fim de semana (PM24) | ~1h30 sem ciclos do ERP numa segunda; 1.373 SKUs sem espelhar no passe da manhã | 0 pedidos perdidos; reautorização manual; renovação pela nuvem desde então |
+| Webhook mudo (PM25) | 4 defeitos independentes | eventos reais aceitos e validados no mesmo dia |
 
 ## Achados de negócio que só o sistema enxergou
 
@@ -95,4 +109,5 @@ Números medidos, com a fonte de cada um. Sem valores financeiros (regra deste r
 - No atacado, **a grade furada no tamanho do meio** tem custo mensurável: perda direta (o que o tamanho furado vendia) mais venda casada (peças de outros tamanhos vendidas nas mesmas notas). Top 20 modelos por perda, com filtro de período.
 - Régua de inatividade do atacado é **1 ano**, não 60 dias — a régua "de livro" marcaria clientes normais como perdidos.
 - No financeiro do ERP principal, a maioria das contas a receber aparece vencida e em aberto — não é bug: parcelas recebidas e nunca baixadas no ERP. O caixa do painel existe para isso.
+- Na segunda empresa, o relatório de grade somava "P" de adulto com "P" de bebê. Separados pela família (categoria do ERP, depois o próprio tamanho, depois a grade do modelo), quase **1 em cada 5** peças vendidas em P, M, G e GG nos últimos 120 dias era de bebê — antes, invisível dentro da linha do adulto.
 - Um "cliente" com ciclo de compra de 8 dias era na verdade uma temporada de 8 pedidos em 3 semanas seguida de 405 dias de silêncio: a fórmula precisava agrupar compras próximas e exigir 3 compras separadas antes de afirmar um ritmo.

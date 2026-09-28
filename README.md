@@ -2,7 +2,7 @@
 
 > Sistema de integração entre uma plataforma B2B de atacado (**Teceo**) e o ERP **Tiny/Olist**, que cresceu para um painel operacional de **três empresas** e **três plataformas** (Teceo, Tiny e Bling), rodando em quatro computadores com failover automático e sem servidor dedicado.
 >
-> Concebido, arquitetado e implementado por uma pessoa, em parceria com IA. Cinco semanas da primeira chamada de API ao sistema completo em produção; oito semanas até o estado descrito aqui (27/07 → 18/09/2026).
+> Concebido, arquitetado e implementado por uma pessoa, em parceria com IA. Cinco semanas da primeira chamada de API ao sistema completo em produção; nove semanas até o estado descrito aqui (27/07 → 28/09/2026).
 
 **English summary at the end of this file.**
 
@@ -24,7 +24,7 @@ A integração inteira, prevista para uma equipe, ficou com uma única pessoa, q
 |---|---|
 | Sem servidor: só os PCs da loja, que desligam à noite e no fim de semana | Serviço roda em **qualquer** PC, com eleição automática de quem manda (host/standby) |
 | Cota de **60 req/min** no Tiny, compartilhada entre o serviço e as pessoas usando o painel | Limitador local, prioridade para quem está clicando, cache de catálogo, cursores de paginação |
-| Token OAuth do Tiny que morre se ninguém renovar por 1 dia | Keep-alive rotativo e reautorização assistida |
+| Token OAuth do Tiny que morre se ninguém renovar por 1 dia — e PCs desligados de verdade no fim de semana | Keep-alive rotativo, cofre de tokens na nuvem e renovação agendada fora da loja, com freios |
 | Estoque físico contado à mão, notas fiscais que às vezes não baixam estoque, produtos cadastrados errado no ERP | Livro-razão local de cada escrita, reconciliação e "guardas" que seguram o que parece errado |
 | Três empresas que **não podem misturar um único dado** | Um arquivo de banco por empresa; identidade num quarto arquivo; separação provada por script |
 
@@ -81,7 +81,10 @@ As outras duas empresas do grupo, que usam Bling (uma delas com loja física, fe
 Tela de pedidos por empresa a partir do espelho local (custo de API zero), com edição que grava no ERP de varejo sob prévia obrigatória, selo de estoque por item, impressão A4 e planilha offline; aba de notas fiscais com as situações mapeadas por ERP (os dois usam números diferentes para "cancelada"); contas a receber, a pagar e caixa espelhados do ERP com lançamentos manuais; relatórios com período personalizado e folha de impressão por relatório; conferência diária automatizada dos relatórios contra os dois ERPs, dia a dia.
 
 **Operação em 4 PCs sem servidor**
-Cada PC sobe o serviço no logon; um cadeado na nuvem (leader lease com TTL de 3 min) decide quem é o host; os demais ficam em standby, redirecionam o painel para o host, baixam o código novo pela rede (hash por arquivo), mantêm réplica dos bancos para assumir com dados recentes e recebem o cadastro de usuários linha a linha a cada 2 min. Um agente de bandeja, compilado com o `csc` que já vem no Windows, religa o serviço e recebe ordens de manutenção protegidas por senha mestre. A aba de saúde vigia os ciclos **e** as 43 telas.
+Cada PC sobe o serviço no logon; um cadeado na nuvem (leader lease com TTL de 3 min) decide quem é o host — e só assume quem prova que o próprio banco está em dia com o último host; os demais ficam em standby, redirecionam o painel para o host, recebem o código como **release assinada** (Ed25519, sequência crescente, downgrade recusado), mantêm réplica dos bancos e recebem o cadastro de usuários linha a linha a cada 2 min. Tokens OAuth ficam num cofre que segue o host, e uma tarefa agendada fora da loja os mantém vivos no fim de semana. Troca de host por botão, sem corrida. Um agente de bandeja, compilado com o `csc` que já vem no Windows, religa o serviço e recebe ordens de manutenção protegidas por senha mestre. Cada ato no painel fica registrado com computador e usuário. A aba de saúde vigia os ciclos **e** as 45 telas.
+
+**Webhooks e revisão humana**
+A plataforma B2B passou a avisar por webhook assinado (HMAC), recebido por uma portaria que expõe uma única rota; o polling continua como garantia. Pedidos que o ERP recusa com desfecho provado voltam sozinhos para a fila; os ambíguos esperam uma revisão humana com botão, sem risco de duplicar.
 
 ## Os problemas que valeram o projeto
 
@@ -101,6 +104,11 @@ Cada um tem um post-mortem em [`docs/04-problemas-dificeis.md`](docs/04-problema
 12. **Login caiu porque o host do dia tinha o banco de acesso vazio** — e a blindagem escrita no dia foi sobrescrita pelo ciclo de atualização (o código anda do host para os standbys, nunca ao contrário). Cadastro passou a ser sincronizado linha a linha.
 13. **"Cancelar devolveu estoque"** — era a nossa própria regra da cesta, e a compensação foi o erro. Num sistema com automações próprias, conferir o resultado não basta: é preciso conferir a **autoria**. Registrado com o nome que tem.
 14. **Uma cópia velha do `server.ts` apagou telas inteiras e nada acusou.** Nasceu o verificador de 43 rotas, rodando como ciclo de saúde.
+15. **Um dia inteiro de trabalho sumiu da frota sem ninguém apagar nada.** O atualizador copiava "o que o host tem" — e um host com código velho levou todos para trás. Virou release assinada com downgrade recusado; o trabalho foi refeito a partir dos documentos datados.
+16. **Troca de host com banco velho apagou 31 vínculos de pedido.** Recuperados em 69 s de parada só com `INSERT OR IGNORE` — deixando de fora, de propósito, o que duplicaria relatórios ou reimprimiria 60 etiquetas. A eleição de host passou a perguntar "estou em dia?", não só "estou vivo?".
+17. **Um pedido preso cinco horas por um 429.** O diário anti-duplicidade tratava todo erro como dúvida; 429 prova que nada foi criado. Erros que provam o desfecho viraram lista com teste.
+18. **O token do ERP morria todo fim de semana.** Refresh de 24 h, PCs desligados de verdade; o escopo `offline_access` foi pedido e ignorado. Renovação pela nuvem, gratuita e sem cartão, com três freios e desenhada para parar sozinha quando o autor não estiver mais lá.
+19. **Webhooks que morriam em silêncio.** Quatro defeitos independentes, cada um suficiente — o pior, uma tela de login respondendo 200 ao evento.
 
 ## Números
 
@@ -108,23 +116,24 @@ Cada um tem um post-mortem em [`docs/04-problemas-dificeis.md`](docs/04-problema
 |---|---|
 | Tempo do primeiro contrato de API ao go-live em produção | ~2 semanas (27/07 → 10/08/2026) |
 | Tempo até o sistema completo (3 empresas, 4 PCs, agente) | ~5 semanas |
-| Tempo até o estado atual (pedidos, notas, financeiro e relatórios nas 3; ERP sem negativo nem reserva presa) | ~8 semanas |
+| Tempo até o estado atual (pedidos, notas, financeiro e relatórios nas 3; ERP sem negativo nem reserva presa; release assinada, frescor de host, webhooks) | ~9 semanas |
 | Empresas · plataformas integradas · PCs | 3 · 4 (Teceo, Tiny, Bling ×2 contas, Nuvemshop como canal) · 4 |
 | SKUs sob sincronização | ~1.300 na plataforma B2B; ~2.700 no catálogo do ERP; ~2.500 na segunda empresa |
 | Dependências de runtime | **zero** (Node 26 com TypeScript nativo e `node:sqlite`) |
-| Testes | 49 unitários + harness com ERP falso (7 cenários) + 10 simuladores de mecanismo em banco descartável + verificador de 43 rotas + conferência diária relatórios × 2 ERPs × 3 empresas |
+| Testes | 320 automatizados + harness com ERP falso (7 cenários) + 10 simuladores de mecanismo em banco descartável + verificador de 45 rotas + conferência diária relatórios × 2 ERPs × 3 empresas |
 | Scripts operacionais versionados | ~350 (diagnóstico, reparo com prévia obrigatória e livro-razão, migração em lote, conferência) |
 | Paginação de estoque na Teceo | 966 chamadas / ~2h30 → 28 páginas / 14 s (cursor decifrado) |
 | Busca no painel | 30 s–3 min → 0,02 s (catálogo local + prioridade interativa) |
 | Fotos convertidas de externa para hospedada | 290 de 454 (limite de 2 MB da API) |
 | Reservas presas resolvidas sem tocar saldo (14–18/09) | 1.161 (739 por nota + 348 por cancelamento + 74 nos abertos) — saldo idêntico em todas |
-| Documentos de trabalho datados que originaram este repositório | 100 |
+| Reconciliação de catálogo com o ERP | ~2.600 chamadas/dia → ~80 (15 min → 8 h, com botão manual) |
+| Documentos de trabalho datados que originaram este repositório | 111 |
 
 Mais em [`docs/07-metricas.md`](docs/07-metricas.md).
 
 ## Stack e escolhas
 
-Node.js 26 rodando TypeScript nativo, sem transpilação e sem `node_modules` em runtime. SQLite via `node:sqlite`, um arquivo por empresa, em WAL. HTTP com o módulo padrão; HTML gerado no servidor com um componente de "casca" compartilhado; Chart.js servido localmente (a loja não pode depender de CDN). Redis (Upstash, REST) apenas para o cadeado de host. OAuth2 com o Tiny e com o Bling. Agente de bandeja em C# compilado no próprio Windows. PowerShell e `.cmd` para instalação e manutenção.
+Node.js 26 rodando TypeScript nativo, sem transpilação e sem `node_modules` em runtime. SQLite via `node:sqlite`, um arquivo por empresa, em WAL. HTTP com o módulo padrão; HTML gerado no servidor com um componente de "casca" compartilhado; Chart.js servido localmente (a loja não pode depender de CDN). Redis (Upstash, REST) para o cadeado de host, a marca de frescor dos dados e o cofre de tokens. OAuth2 com o Tiny e com o Bling. Releases assinadas com Ed25519 e canal HTTPS entre máquinas. Webhooks com HMAC-SHA256 atrás de uma portaria. GitHub Actions (plano gratuito, sem cartão) para a renovação de token fora da loja. Agente de bandeja em C# compilado no próprio Windows. PowerShell e `.cmd` para instalação e manutenção.
 
 O porquê de cada escolha está em [`docs/03-decisoes-tecnicas.md`](docs/03-decisoes-tecnicas.md).
 
@@ -135,16 +144,16 @@ O porquê de cada escolha está em [`docs/03-decisoes-tecnicas.md`](docs/03-deci
 | [`docs/01-contexto-e-problema.md`](docs/01-contexto-e-problema.md) | O negócio, a migração dupla, o que precisava existir e por que ninguém entregava |
 | [`docs/02-arquitetura.md`](docs/02-arquitetura.md) | Módulos, ciclos, host/standby, leader lease, réplica, auto-update, agente |
 | [`docs/03-decisoes-tecnicas.md`](docs/03-decisoes-tecnicas.md) | Decisões no formato "contexto → opções → escolha → consequência" |
-| [`docs/04-problemas-dificeis.md`](docs/04-problemas-dificeis.md) | 20 post-mortems |
+| [`docs/04-problemas-dificeis.md`](docs/04-problemas-dificeis.md) | 25 post-mortems |
 | [`docs/05-confiabilidade.md`](docs/05-confiabilidade.md) | Guarda de estoque, retomada automática, harness de simulação, regras para escrita externa |
-| [`docs/06-linha-do-tempo.md`](docs/06-linha-do-tempo.md) | Semana a semana, 27/07 → 18/09 |
+| [`docs/06-linha-do-tempo.md`](docs/06-linha-do-tempo.md) | Semana a semana, 27/07 → 28/09 |
 | [`docs/07-metricas.md`](docs/07-metricas.md) | Números e como foram medidos |
 | [`docs/08-comportamentos-nao-documentados-das-apis.md`](docs/08-comportamentos-nao-documentados-das-apis.md) | O que as APIs do Tiny, da Teceo e do Bling fazem e a documentação não diz |
 | [`CURRICULO.md`](CURRICULO.md) | Como isso vira linhas de currículo e de LinkedIn (PT e EN) |
 
 ## Sobre o uso de IA
 
-Este sistema foi desenvolvido em parceria com um assistente de IA (Claude), usado como par de programação: exploração de APIs, redação de código, revisão, simulações e documentação. As decisões de produto, as regras de negócio, os testes em produção, a operação e a responsabilidade pelo resultado foram humanos. Declarar isso foi decisão do autor — sinceridade em primeiro lugar.
+Este sistema foi desenvolvido em parceria com um assistente de IA (Claude), usado como par de programação: exploração de APIs, redação de código, revisão, simulações e documentação. Entre 23 e 25/09, uma segunda ferramenta de IA (Codex) fez uma auditoria de segurança e implantou o protocolo de release assinada e a maior parte da suíte de testes atual. As decisões de produto, as regras de negócio, os testes em produção, a operação e a responsabilidade pelo resultado foram humanos. Declarar isso foi decisão do autor — sinceridade em primeiro lugar.
 
 ## Autor
 
@@ -158,6 +167,6 @@ Formação em Ciência da Computação, técnico em redes, pós-graduação em C
 
 **Multi-ERP integration for a family-owned fashion group — case study.** A one-person project (built in partnership with AI) that connected a B2B wholesale platform (Teceo) to an ERP (Tiny/Olist) and grew into an operational panel for three companies and three platforms, running on four ordinary Windows PCs with no dedicated server.
 
-Highlights: leader election through a Redis lease (with a split-brain window found by simulation and fixed), code auto-update, database replication and row-level user-store sync over the LAN, an idempotent "stock write guard" with automatic resumption after crashes (validated against a fake-ERP harness with 7 failure scenarios), checkpointed stock sweeps, reverse-engineered undocumented API behaviours (pagination cursors, attachment limits, reservation release, two type fields with overlapping names hiding 95 broken products), a same-day fix of two security flaws found in self-audit, per-company physical data separation with a unified identity store, orders / invoices / finance / reports for all three companies, a route checker running as a health cycle, and 20 written post-mortems — including the ones where the mistake was mine.
+Highlights: leader election through a Redis lease (with a split-brain window found by simulation and fixed), code auto-update, database replication and row-level user-store sync over the LAN, an idempotent "stock write guard" with automatic resumption after crashes (validated against a fake-ERP harness with 7 failure scenarios), checkpointed stock sweeps, reverse-engineered undocumented API behaviours (pagination cursors, attachment limits, reservation release, two type fields with overlapping names hiding 95 broken products), a same-day fix of two security flaws found in self-audit, per-company physical data separation with a unified identity store, orders / invoices / finance / reports for all three companies, a route checker running as a health cycle, and 25 written post-mortems — including the ones where the mistake was mine. Week 9 hardened the fleet against itself: signed releases (Ed25519, monotonic sequence, downgrade refused) after an old updater silently rolled a day of work back; a data-freshness check in host election after a failover adopted a days-old database (recovered in 69 s with insert-only merges); OAuth tokens that follow the lease through a cloud vault; a scheduled cloud job that keeps the ERP token alive over weekends when every PC is powered off — with a kill switch and a dormancy stop so it never outlives the business's use of it; HMAC-signed webhooks behind a single-route gateway; and a per-computer audit log of every state-changing action.
 
-Stack: Node.js 26 with native TypeScript, zero runtime dependencies, `node:sqlite` in WAL mode, OAuth2, Upstash Redis, a C# tray agent compiled with the Windows-bundled compiler. Timeline: ~2 weeks from first API call to production, ~5 weeks to the full system, ~8 weeks to the state described here (27 Jul → 18 Sep 2026). The source code belongs to the company and is not published; this repository contains the anonymised engineering write-up.
+Stack: Node.js 26 with native TypeScript, zero runtime dependencies, `node:sqlite` in WAL mode, OAuth2, Upstash Redis, Ed25519-signed releases, GitHub Actions, a C# tray agent compiled with the Windows-bundled compiler. 320 automated tests. Timeline: ~2 weeks from first API call to production, ~5 weeks to the full system, ~9 weeks to the state described here (27 Jul → 28 Sep 2026). The source code belongs to the company and is not published; this repository contains the anonymised engineering write-up.

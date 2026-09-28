@@ -163,3 +163,63 @@ A versão de um PC é o hash de todos os arquivos distribuídos **exceto** `.env
 ### Conferência diária
 
 `scripts/conferencia-relatorios.ts` (só leitura, ~2 min): relatórios do painel × os dois ERPs, dia a dia, 90 dias, 3 empresas — contagem e situação de notas, faturamento por dia e por mês, pedidos por mês, canceladas, contas a receber, os 40 maiores saldos e a consistência interna dos relatórios (KPI = por mês = por dia = por modelo; peças = curva de grade; ABC = soma por produto). Primeira rodada achou que o espelho da terceira empresa nunca rodava sozinho.
+
+
+---
+
+## Adendo — o que entrou entre 19/09 e 28/09
+
+```mermaid
+flowchart TB
+    subgraph nuvem["Nuvem (Upstash Redis)"]
+        C[cadeado de host]
+        B[bilhete de preferência]
+        M[marca de escrita do host]
+        K[cofre de tokens<br/>ERP · varejo ×2]
+        I[interruptor da renovação]
+    end
+    GA["tarefa agendada<br/>(GitHub Actions, a cada 6 h)"] -- "lê marca e cofre;<br/>renova só se preciso" --> K
+    GA -. respeita .-> I
+    H[HOST] -- "renova a cada 15 s" --> C
+    H -- "1×/min" --> M
+    H <-- "grava/adota o mais novo" --> K
+    S[standby candidato] -- "antes de assumir:<br/>meu banco ≥ marca − 10 min?" --> M
+    S -. "espera se o bilhete<br/>aponta outro PC" .-> B
+    TE[Plataforma B2B] -- "webhook HMAC" --> P[portaria<br/>1 rota exposta] --> H
+```
+
+### Distribuição v2 — release assinada
+
+Substitui o manifesto por hash descrito acima. Cada pacote é uma release assinada (Ed25519) com sequência crescente; o cliente recusa assinatura inválida e **downgrade**. As máquinas se falam por HTTPS com identidade por máquina e CA própria; o serviço sobe por um *bootstrap* que ativa a release armada. Publicação a partir de cópia, com guarda contra mudança não carregada na produção (D22). Motivo: PM21.
+
+### Frescor na troca de host (`frescor.ts`)
+
+Marca de escrita do host nos três bancos de negócio e na nuvem, 1×/min (bancos primeiro; a nuvem só se todos gravaram). Trava 1: candidato com banco mais de 10 min atrás do último host não assume. Trava 2: réplica mais velha que o local não é adotada. Motivo: PM22; decisão: D23.
+
+### Cofre de tokens (`cofreTokens.ts`)
+
+Tokens OAuth das três contas também na nuvem, com data e máquina; o mais novo ganha em qualquer PC; sincronização obrigatória ao assumir o host. É o mesmo cofre que a renovação na nuvem usa (D24, D28).
+
+### Troca de host por botão
+
+Cartão "cadeado de host" na tela de computadores (só dono): quem é o host, desde quando, qual é este PC; escolher outro PC grava um bilhete de preferência e a troca acontece pelo protocolo, em ~1 min, sem corrida (D25).
+
+### Webhooks da plataforma B2B
+
+Portaria em processo separado atrás de um túnel, só uma rota; o painel valida HMAC aceitando as três grafias de cabeçalho que a plataforma usa (PM25). Polling mantido como garantia (D26).
+
+### Diário de pedidos e central de operação
+
+Cada parte de pedido passa por estados explícitos (`ready` → `reconcile` antes do POST → vinculado). Recusa definitiva volta para `ready`; ambiguidade fica em reconciliação, com revisão humana na central de operação (D27). Eventos de webhook que não puderam ser aplicados também ficam em revisão, com botão para liberar.
+
+### Log de atos por computador (`acesso/atos.ts`)
+
+Gancho no início do atendimento de cada requisição, gravando no fim da resposta; tabela no banco de identidade, só o host grava; tela "atos por computador" com cartões por máquina e filtros por computador, usuário e período (D29).
+
+### Ciclos revistos
+
+Reconciliação de catálogo com o ERP principal: de 15 min para **8 h** (3×/dia), com botão manual para produto novo — era a maior fonte evitável de consumo de cota (PM23). Espelho de categorias da segunda empresa 1×/dia, alimentando os tamanhos por família (bebê / criança / adulto) nos relatórios de grade: "P" de adulto e "P" de bebê deixaram de ser a mesma linha.
+
+### Verificador de rotas
+
+De 43 para **45** rotas vigiadas (entre as novas, a de atos por computador).

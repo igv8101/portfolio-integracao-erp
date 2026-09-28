@@ -152,6 +152,8 @@ Cada decisão no formato **contexto → opções → escolha → consequências*
 
 **Consequências.** Quem lê sabe exatamente o que está avaliando: capacidade de definir o problema, decidir, testar em produção, operar e assumir a responsabilidade — com a IA como ferramenta.
 
+**Atualização (25/09).** Entre 23 e 25/09 uma segunda ferramenta de IA (Codex) fez uma auditoria de segurança a partir de um retrato do código e implantou o protocolo de release assinada (D22) e a maior parte da suíte de testes atual. Vale a mesma regra: está dito aqui, com o que cada uma fez.
+
 ---
 
 ### D15. Checkpoint por SKU na varredura, sem tocar no atalho que a faz caber na cota
@@ -219,3 +221,95 @@ Cada decisão no formato **contexto → opções → escolha → consequências*
 **Leitura.** O código pertence à empresa (Lei 9.609/98, art. 4º; o precedente mais parecido, TST 2025, foi contra o empregado mesmo sem função de programador). Um ERP completo assume o fiscal brasileiro em plena reforma tributária, contra concorrentes de centenas de pessoas, com nicho de moda já ocupado. O diferencial construído aqui não é o cadastro de NF — é a camada de inteligência sobre os ERPs (grade furada, reservas presas, saldo fantasma, conciliação).
 
 **Escolha.** Nem um nem outro: fechar bem o que é da empresa; formalizar por escrito a autorização do case e a não-oposição a um produto independente; começar pequeno, *clean-room*, no PC pessoal, uma função só, multi-tenant desde o primeiro dia, meta de 3 clientes pagando antes de expandir. Está aqui porque decidir o que **não** construir também é engenharia.
+
+
+---
+
+## Semana 9 (19/09 a 28/09)
+
+### D22. Código como *release* assinada com sequência crescente — e publicar só a partir de uma cópia
+
+**Contexto.** PM21: o atualizador por hash copiava "o que o host tem", e um host com código velho levou a frota para trás. Em 23–25/09 uma auditoria de segurança (feita com uma segunda ferramenta de IA, ver D14) redesenhou a distribuição.
+
+**Escolha.** Cada pacote é uma release assinada (Ed25519) com número de sequência sempre crescente; o cliente recusa pacote sem assinatura válida e recusa **downgrade**. As máquinas conversam por HTTPS com identidade própria e CA própria. Publicar tem um protocolo: trabalhar numa **cópia** da instalação ativa, testes e typecheck na cópia, gerar o pacote, armar no host, reiniciar; os standbys puxam pelo canal autenticado. Editar a instalação ao vivo é proibido — o hash diverge do manifesto assinado e os standbys recusam.
+
+**A guarda que veio depois.** Em 25/09 outra ferramenta alterou arquivos direto na produção (uma limpeza de comentários). O gerador de pacote passou a **comparar a produção com a cópia** e recusar se a produção tiver qualquer mudança que a cópia não carregue. A passagem só é liberada com uma lista explícita de arquivos meus e, mesmo assim, recusa se sobrar diferença fora dela.
+
+**Consequências.** Publicar ficou mais lento (minutos em vez de salvar um arquivo) e passou a exigir uma pessoa para reiniciar o host. Em troca, "a versão nova" tem significado verificável, e nenhum PC anda para trás.
+
+---
+
+### D23. Só vira host quem tem o banco em dia
+
+**Contexto.** PM22: o failover perguntava "o host caiu?" e nunca "o meu banco está em dia?".
+
+**Escolha.** Marca de escrita gravada pelo host a cada minuto em cada banco de negócio e na nuvem; candidato a host compara a marca do banco que vai usar com a da nuvem (tolerância de 10 min) e fica em standby se estiver atrás. Adoção de réplica só quando a réplica não é mais velha que o local. Saída de emergência explícita (um arquivo com nome inequívoco, uso único) e aviso no Windows quando um PC se recusa a assumir.
+
+**Consequências.** Pode haver minutos sem host se o único PC ligado estiver com banco velho — escolha consciente: minutos sem integração custam menos que um dia de dados apagados. O banco de identidade continua com regra própria (D16), porque ali a pergunta é "tem gente dentro?", não "é recente?".
+
+---
+
+### D24. Tokens seguem o cadeado, não a réplica
+
+**Contexto.** 21/09, troca de host: o ERP de varejo respondeu `invalid_grant` nas duas contas. O refresh do Bling é de **uso único**; o novo host tinha herdado pela réplica uma cópia que o host anterior já tinha queimado.
+
+**Escolha.** Um cofre na mesma nuvem do cadeado, uma chave por conta. Toda gravação de token (autorização ou renovação) vai também para o cofre, com data e máquina. Antes de renovar — ou antes de desistir por falta de token — o PC olha o cofre e adota o mais novo; ao assumir o host, sincroniza os três antes de ligar qualquer ciclo. Sem configuração de nuvem, desliga; nuvem fora, segue com o local e avisa.
+
+**Consequências.** Quem renovou por último ganha, em qualquer máquina. Efeito colateral previsto e documentado: se alguém autorizar com o usuário errado, o cofre espalha o usuário errado — por isso a reautorização mostra na tela o que foi concedido.
+
+---
+
+### D25. Trocar o host por bilhete de preferência, nunca "arrancando" o cadeado
+
+**Contexto.** Pedido do dia a dia: "traga o host para este PC, e deixe um botão para isso".
+
+**Opções.** (a) O painel apaga o cadeado e o PC escolhido pega; (b) o painel escreve uma preferência e a troca acontece pelo próprio protocolo.
+
+**Escolha.** (b). O botão grava um bilhete; o host atual o vê na renovação seguinte (≤ 15 s), solta o cadeado e reinicia como standby; os outros PCs **não disputam** enquanto o bilhete apontar para outro; o escolhido verifica a cada 20 s e assume em ~1 min. O bilhete só manda por 3 min — depois vira sugestão e quem estiver de pé pode assumir (senão, um PC escolhido e desligado deixaria a frota sem host) — e expira em 15 min.
+
+**Consequências.** Nunca há dois hosts, porque ninguém tira o cadeado de ninguém: o dono solta. O mesmo bilhete virou parte do protocolo de publicação (D22), para o host certo reassumir depois do reinício.
+
+---
+
+### D26. Webhook atrás de uma portaria mínima — e o polling continua
+
+**Contexto.** D2 escolheu polling porque a loja não tem endereço público. Com a nova versão da plataforma B2B (20/09), os webhooks passaram a ter assinatura HMAC.
+
+**Escolha.** Um processo separado, a **portaria**, é a única coisa exposta pelo túnel: só `POST` na rota do webhook passa, todo o resto é 404; há um ping para teste e um diário de entregas. O painel valida a assinatura e o timestamp. O polling **não saiu**: o webhook adianta, o polling garante.
+
+**Consequências.** A superfície exposta é uma rota. Pendências registradas: o túnel atual tem endereço temporário (endereço fixo depende de domínio próprio) e a portaria encaminha para o PC local — precisa passar a seguir o cadeado.
+
+---
+
+### D27. Classificar os erros que **provam** o desfecho
+
+**Contexto.** PM23: um diário de pedidos que tratava todo erro como "não sei se criou".
+
+**Escolha.** Duas listas explícitas. Recusa definitiva (400, 401, 403, 404, 422, 429): o ERP não criou — volta para a fila. Ambíguo (timeout, 5xx, 409): pode ter criado — fica em reconciliação, com revisão humana num botão que exige escrever o que foi conferido.
+
+**Consequências.** Nenhum pedido duplicado e nenhum pedido esquecido por excesso de cautela. A lista é código, com teste próprio, não uma interpretação espalhada pelos `catch`.
+
+---
+
+### D28. Renovar o token pela nuvem — fora da empresa e com três freios
+
+**Contexto.** PM24. O token do ERP precisa de uma renovação a cada 24 h, inclusive quando todos os PCs estão desligados.
+
+**Opções.** (a) Um PC ligado no fim de semana; (b) lembrete para reautorizar; (c) uma função em nuvem com plano gratuito que exige cartão; (d) uma tarefa agendada no GitHub Actions, gratuita e sem cartão.
+
+**Escolha.** (d), num repositório **privado** na conta pessoal do autor, **sem código da empresa** — só um script de renovação que lê e grava o mesmo cofre de tokens (D24), com as credenciais em segredos do repositório. Roda a cada 6 h com três freios, nesta ordem:
+1. **interruptor** no cofre: desligado → não faz nada;
+2. token renovado há menos de 12 h → não faz nada (os PCs estão cuidando);
+3. sistema sem host há mais de **5 dias** → não faz nada (a tarefa existe para fim de semana e feriado, não para manter viva uma integração abandonada).
+
+**Consequências.** Na segunda, o host adota pelo cofre o token que a nuvem manteve. E a tarefa foi desenhada para **o autor poder ir embora**: ela para sozinha quando a empresa deixa de usar o sistema; o interruptor pode ser acionado pela empresa (botão no painel, previsto) ou pelo dono do repositório; e, sendo gratuita e sem cartão, o pior caso de estourar o limite é ela parar. Uma integração que depende da conta pessoal de alguém precisa de um jeito limpo de deixar de depender.
+
+---
+
+### D29. Registrar cada ato por computador — e escolher o que **não** registrar
+
+**Contexto.** Quatro PCs, cinco pessoas, papéis por empresa. A auditoria de estoque já dizia "quem"; faltava "de qual máquina" para tudo que muda estado.
+
+**Escolha.** Todo POST/PUT/PATCH/DELETE do painel, mais as rotas de autorização OAuth (que são GET), gravado quando a resposta termina: hora, IP, computador (IP fixo → cadastro de máquinas), usuário, empresa (pela rota), método, rota, parâmetros com segredos mascarados (`code`, `state`, tokens), status e duração. Não entra: o **corpo** (pode ter senha), consultas GET, e o tráfego máquina-com-máquina (agente, réplica, atualização, webhook). Só o host grava, no banco de identidade — replicado, sobrevive à troca de host —, com retenção de 180 dias e tela só para o dono do sistema.
+
+**Consequências.** O login não tinha usuário na requisição (a sessão ainda não existia); o registro passou a ler a sessão criada na **resposta**. Detalhe pequeno que só apareceu com o primeiro ato real — a mesma lição do PM25.

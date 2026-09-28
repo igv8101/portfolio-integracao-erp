@@ -285,3 +285,83 @@ Quatro achados menores do mesmo dia, todos da mesma família: a listagem de uma 
 - **Desconto na nota.** O faturamento de um dia divergia do ERP de varejo. A listagem de notas não traz `valorNota` — só o detalhe; e o upsert da listagem fazia `valor = excluded.valor` (nulo) a cada ciclo, apagando o que o detalhe tinha trazido. Duas notas com desconto dado na nota (não no item) explicavam a diferença. Correção: coluna própria + `COALESCE(excluded.valor, nf.valor)`; backfill único. A mesma armadilha tinha aparecido de manhã com o id da nota no pedido.
 - **PUT que não mudava nada era recusado.** No ERP de varejo, `PUT /pedidos/vendas/{id}` recalcula o total como Σ(quantidade × valor − desconto do item em reais) e recusa se as parcelas não baterem — mas o `total` que o GET devolve ignora esse desconto. Um pedido chegava com parcela ≠ total dos itens e qualquer PUT, mesmo idêntico, falhava. Correção: quando a edição muda o total, as parcelas acompanham na proporção; quando o pedido já chega inconsistente, a tela bloqueia e explica (mexer na parcela mudaria quanto o cliente deve — não é decisão nossa).
 - **200 com corpo vazio.** Gerar o HTML depois do `writeHead(200)` transforma um erro em resposta vazia com status de sucesso. Foi assim que a primeira versão de uma tela "funcionou" sem mostrar nada (a causa raiz era uma coluna que ainda não existia naquele banco). HTML agora é montado antes do cabeçalho.
+
+
+---
+
+## PM21 · O trabalho de um dia inteiro sumiu da frota — e ninguém apagou nada (18/09 → 23/09)
+
+**Sintoma.** Numa auditoria feita a partir de um retrato do código de 23/09, três entregas de 18/09 simplesmente não existiam: o relatório de vendas de feira, o corte dos códigos genéricos nas quebras "por peça" e a home centralizada das três empresas. Não estavam na versão ativa, nem nas cópias de reversão, nem em nenhum backup.
+
+**Causa.** O atualizador antigo (manifesto com hash por arquivo, descrito em `02-arquitetura.md`) fazia o standby copiar **o que o host tivesse** sempre que os hashes diferissem — sem perguntar qual versão era mais nova. Entre 21 e 23/09, um PC com código mais velho virou host, e cada standby "atualizou" para trás. O hash dizia "diferente", nunca "anterior". É o mesmo mecanismo do PM16 (correção que some porque o código só anda do host para os standbys), agora pegando um dia inteiro de trabalho.
+
+**Correção.** Protocolo de atualização v2 (D22): cada pacote é uma *release* assinada (Ed25519) com número de sequência sempre crescente, e o cliente **recusa downgrade**. O trabalho perdido foi refeito em 25/09 a partir dos documentos de trabalho datados de 18/09 — que tinham o suficiente para reconstruir regras, telas e números, e os números de 365 dias bateram com os do dia original.
+
+**Lição.** "Igual ao host" não é "atualizado". Distribuição de código sem ordem total é uma máquina de voltar no tempo. E os documentos datados (D13) deixaram de ser histórico e viraram backup de intenção: o código se perdeu, o *porquê* não.
+
+---
+
+## PM22 · Troca de host com banco velho apagou 31 vínculos de pedido (25/09)
+
+**Sintoma.** Depois de uma manhã de implantação, 31 pedidos da plataforma B2B estavam sem o vínculo com o ERP, as feiras cadastradas tinham sumido, a calibração e os modelos de etiqueta também — e o ciclo de notas começou a rebaixar o histórico desde 2025, estourando a cota do ERP.
+
+**Causa.** Durante a implantação, um standby virou host por algumas horas usando o **próprio banco local**, parado havia dias (a réplica dele não estava em dia). Quando o PC de costume reassumiu, seguiu a regra do failover: adotou a réplica **do host anterior** — o banco velho — e guardou o próprio de lado. A adoção de réplica (D6) presume que o último host é quem tem os dados mais novos. Naquela manhã, não tinha.
+
+**Recuperação (69 s de parada).** O banco deixado de lado ficou numa cópia "antes-de-assumir" — a regra de 31/08 de nunca apagar o local ao adotar é o que salvou o dia. Um script só com `INSERT OR IGNORE`, uma transação por banco, integridade conferida nos quatro: nada do que entrou naquela manhã foi apagado ou alterado. Três grupos ficaram fora **de propósito**:
+- caches que se refazem pelo ERP (itens de nota, espelhos, contas): os ids tinham sido reaproveitados, e reinserir **duplicaria itens nos relatórios**;
+- a fila de impressão e as ordens de máquina: reinserir **reimprimiria 60 etiquetas** e reexecutaria comandos;
+- a marca "histórico de notas completo": o cache não voltou, e marcar como pronto deixaria relatórios antigos sem itens. O refazer terminou sozinho, ao custo de cota naquele dia.
+
+**Correção — duas travas (`frescor.ts`).**
+1. O host grava, uma vez por minuto, uma **marca de escrita** em cada banco de negócio e na nuvem. Antes de virar host, o PC compara a marca do banco que **vai usar** com a da nuvem; se estiver mais de 10 min atrás do último host, **não assume** — fica em standby esperando o host voltar ou uma réplica em dia, e avisa no Windows. Emergência: um arquivo com nome explícito na pasta libera uma vez.
+2. Na adoção, a réplica só substitui o banco local se **não for mais velha** que ele.
+
+As duas marcas comparadas foram gravadas pelo relógio do mesmo host, então diferença de relógio entre os PCs não entra na conta.
+
+**Lição.** Failover que confia em "quem era o host por último" precisa perguntar "com que dados". A pergunta certa não é "estou vivo?", é "estou em dia?".
+
+---
+
+## PM23 · Um pedido preso cinco horas por um 429 — e o que estava comendo a cota (25/09)
+
+**Sintoma.** Um pedido aprovado na plataforma B2B não chegou ao ERP. Não havia erro visível; ele estava "em reconciliação" desde o fim da manhã.
+
+**Causa 1 — o diário de pedidos.** O diário (escrito na auditoria de 23–25/09) marca a parte do pedido como `reconcile` **antes** do POST, para nunca duplicar um pedido quando não se sabe se o ERP chegou a criar. Correto — mas ele mantinha `reconcile` para **qualquer** erro. O POST tinha batido num 429, e um 429 prova que o ERP **não** criou nada. O pedido ficou esperando uma revisão humana que ninguém sabia que existia, numa tela sem botão utilizável.
+
+**Correção.** Recusa definitiva (400, 401, 403, 404, 422, 429) devolve a parte para a fila (`ready`), local e compartilhada, com o motivo registrado. Timeout, 5xx e 409 continuam em reconciliação — ali a dúvida é real. Na central de operação, cada pedido em reconciliação ganhou a caixa "conferi no ERP: não existe", o campo do que foi conferido e o botão **autorizar novo envio**; a API devolve o motivo quando recusa. O pedido saiu no mesmo minuto da liberação.
+
+**Causa 2 — a cota.** 2.179 avisos de 429 no dia, contra ~1.200 num dia normal. Somando: a reconciliação de catálogo tinha ficado a cada **15 min** (~2.600 chamadas/dia) — voltou para a cada 8 h, com o botão manual de atualização para produto novo; o rebaixamento do histórico de notas causado pelo PM22 (388 notas, pontual); o espelhamento de estoque de sempre (1.375 consultas a cada 6 h); e cinco reinícios do host no dia, cada um repetindo os primeiros ciclos.
+
+**Lição.** Um estado "em dúvida" só é seguro se a dúvida for real e se houver uma saída visível para ele. Classificar os erros que **provam** o desfecho é o que separa proteção contra duplicidade de pedido perdido.
+
+---
+
+## PM24 · O token do ERP morria todo fim de semana (28/09)
+
+**Sintoma.** Segunda de manhã, alerta vermelho: sem token válido do ERP principal. Por ~1h30, nenhum ciclo que dependia dele andou — o passe de estoque (1.373 SKUs), edições de cliente e de pedido, baixa de notas, financeiro. Nenhum pedido se perdeu (tudo ficou na fila), e a reautorização manual resolveu. Mas ia se repetir toda segunda e todo feriado.
+
+**Causa.** O refresh token do ERP dura **24 h** e é rotativo. O keep-alive de 4 h só roda se algum PC estiver ligado como host — e no fim de semana os computadores são **desligados de verdade**, não suspensos. Ninguém renova, o refresh vence, e só uma pessoa pode reautorizar (OAuth de usuário).
+
+**Tentativa 1 — pedir um refresh longo.** O provedor de identidade do ERP é Keycloak, que costuma emitir *offline token* com `scope=openid offline_access`. A autorização passou a pedir esse escopo, o callback passou a tratar `invalid_scope` e a mostrar na tela qual tipo de autorização veio, e o renovador passou a tentar mais uma vez (1× a cada 10 min) mesmo depois do prazo anotado. Resultado: o ERP **aceitou o pedido e ignorou o escopo** — emitiu a autorização comum de 24 h. O código ficou (é inofensivo e registra o que veio).
+
+**Tentativa 2 — renovar de fora.** Opções: deixar um PC ligado no fim de semana (não), avisar na sexta (depende de memória humana, que é justamente o problema), ou renovar da nuvem. A primeira nuvem considerada exigia cartão de crédito mesmo no plano gratuito, com cobrança automática acima do limite — descartada pelo dono do projeto. Ficou uma tarefa agendada no GitHub Actions (gratuito, sem cartão: se o limite acabar, a tarefa só para), a cada 6 h, lendo e gravando no mesmo cofre de tokens que os PCs usam (D24). Detalhes e freios em D28.
+
+**Lição.** Um keep-alive que depende da infraestrutura estar ligada não é keep-alive — é "alive enquanto alguém estiver aqui". E testar o caminho documentado pelo padrão (Keycloak) antes do caminho caro valeu a pena mesmo dando errado: a resposta "não libera" ficou registrada e ninguém vai precisar testar de novo.
+
+---
+
+## PM25 · Webhooks que morriam em silêncio — quatro defeitos, qualquer um bastava (21/09)
+
+**Contexto.** A nova versão da plataforma B2B (20/09) trouxe webhooks com assinatura HMAC. O painel já tinha uma rota pronta para eles havia semanas — nunca tinha recebido um evento real.
+
+**Sintoma.** Cadastrado o webhook, a plataforma dizia "entregue" e nada acontecia.
+
+**Os quatro defeitos, na ordem em que apareceram:**
+1. A rota do webhook não estava na lista de rotas liberadas sem login. O evento recebia **a tela de login com status 200** — para a plataforma, sucesso.
+2. O painel lia o cabeçalho de assinatura com o nome da documentação. O real é outro (e a tela de configuração cita um terceiro). O painel passou a aceitar os três.
+3. O formato da assinatura também diferia (`t=<unix>,sha256=<hex>` em vez de `sha256=<hex>`), com a conta feita sobre `"<timestamp>.<corpo cru>"`. O verificador passou a aceitar as variantes, com o timestamp vindo do cabeçalho próprio ou de dentro da assinatura. Conferido offline contra um evento real: bate.
+4. A **portaria** (o único processo exposto à internet, D26) repassava uma lista fixa de cabeçalhos e engolia justamente o da assinatura. Passou a repassar tudo menos transporte e cabeçalhos do túnel.
+
+**Resultado.** Eventos reais de "aprovado" e "cancelado" (com a justificativa escrita pelo cliente) aceitos e validados no mesmo dia.
+
+**Lição.** Um endpoint que nunca recebeu o evento de verdade não está pronto — está *compilando*. E "200" não é "funcionou": a plataforma trata 4xx como falha definitiva (sem reenvio) e 200 como entrega, então um 200 errado é o pior resultado possível.

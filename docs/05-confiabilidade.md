@@ -127,3 +127,24 @@ Uma segunda auditoria, com uma "Tiny falsa" em memória e banco isolado (`DB_PAT
 **Harness de simulação para cada mecanismo novo:** trava manual 13/13, planilha passiva, espelhamento 22/22, página de espelhamento 12/12, cota 9/9 (incluindo "recusa a cada 30 s por 30 min: o teto ainda sobe"), manifesto 8/8, sincronização de cadastro 4/4 (o 4º pegou um defeito real), guarda de produto novo 12/12 — todos em banco descartável via `DB_PATH`, nunca no banco vivo.
 
 **Erros meus, registrados com esse nome:** previsão de hora extrapolada de 15 min de amostra (PM15); "nenhum dos três tem as correções" concluído a partir de um sinal que não media código (PM15); compensação que apagou uma devolução correta (PM17); duas cópias velhas de arquivo por cima de código novo no mesmo dia (PM18); a primeira versão do doc do PM15 apontando a causa errada, mantida no histórico com o aviso.
+
+
+## Adendo — semana 9 (19/09 a 28/09)
+
+**Ordem total para o código.** Hash por arquivo diz "diferente", não "mais novo". Release assinada com sequência crescente e downgrade recusado (D22, PM21).
+
+**"Estou em dia?" antes de "estou vivo?".** A eleição de host ganhou uma pergunta sobre dados, não só sobre presença: marca de escrita comparada com a do último host antes de assumir, e réplica mais velha que o local nunca adotada (D23, PM22).
+
+**Recuperar só com `INSERT OR IGNORE` — e saber o que não recuperar.** A recuperação do PM22 não apagou nem alterou nada do que entrou depois; e deixou de fora, de propósito, o que duplicaria (caches com ids reaproveitados), o que teria efeito físico (fila de impressão: 60 etiquetas) e o que reexecutaria comandos (ordens de máquina). Restaurar tudo teria sido o segundo incidente do dia.
+
+**Estado de dúvida só com dúvida real, e sempre com saída.** Reconciliação para o que é ambíguo; fila para o que tem desfecho provado; botão de revisão humana para o resto (D27, PM23).
+
+**Segredos que migram com o papel, não com o arquivo.** Tokens OAuth seguem o cadeado pelo cofre, não a réplica — refresh de uso único não sobrevive a cópia de arquivo (D24).
+
+**Keep-alive que não depende da infraestrutura estar ligada.** Renovação na nuvem com três freios (interruptor, "os PCs já cuidaram", "o sistema foi abandonado") e desligamento previsto para quando o autor não estiver mais lá (D28, PM24).
+
+**Endpoint só está pronto depois do primeiro evento real.** Quatro defeitos independentes no webhook, cada um suficiente para matá-lo em silêncio com status 200 (PM25).
+
+**Testes.** A suíte automatizada passou de 49 para **320** testes: a auditoria de 23–25/09 trouxe a maior parte, e cada mudança da semana veio com o seu (tamanhos por família, recusa definitiva de pedido, atos por computador, autorização longa, confiabilidade da atualização). Verificador de rotas em 45.
+
+**Erros meus, registrados com esse nome (28/09):** apontei 7 SKUs negativos como anomalia — eram linhas antigas de estado local de SKUs que não participam do passe de estoque, portanto nunca atualizadas; apontei um tamanho "repetido" numa grade — vinha da cópia local do catálogo, desatualizada, enquanto o ERP estava certo; e afirmei que não havia cliente pendente de aprovação olhando o status da API — o status existe mas não é usado, e os pedidos de cadastro ficam numa área que a API não expõe. Os três foram corrigidos pela pessoa que opera o sistema, olhando a tela. A regra que já existia (conferir ao vivo antes de chamar de anomalia; espelho local não é régua) valia para os três.
